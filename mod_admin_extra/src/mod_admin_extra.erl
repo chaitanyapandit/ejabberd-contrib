@@ -61,6 +61,7 @@
 	 set_vcard/4,
 	 set_vcard/5,
 	 %% Roster
+	 populate_roster/3,
 	 add_rosteritem/7,
 	 delete_rosteritem/4,
 	 process_rosteritems/5,
@@ -352,6 +353,12 @@ commands() ->
 			longdesc = Vcard2FieldsString ++ "\n\n" ++ Vcard1FieldsString ++ "\n" ++ VcardXEP,
 			module = ?MODULE, function = set_vcard,
 			args = [{user, string}, {host, string}, {name, string}, {subname, string}, {contents, {list, string}}],
+			result = {res, rescode}},
+
+     #ejabberd_commands{name = populate_roster, tags = [roster],
+			desc = "Populate user roster with dummy buddies",
+			module = ?MODULE, function = populate_roster,
+			args = [{count, integer}, {max, integer}, {server, string}],
 			result = {res, rescode}},
 
      #ejabberd_commands{name = add_rosteritem, tags = [roster],
@@ -1062,6 +1069,42 @@ update_vcard_els(Data, ContentList, Els1) ->
 %%%
 %%% Roster
 %%%
+%% Populate roster with mutual buddies, eg ejabberdctl populate_roster 6 50 xmpp.myserver.com will create roster such that each buddy has 5 other buddies in roster
+%% Note: Just make sure the Count is even number and you already have test users up to the Max count 
+populate_roster(Count, Max, Server) ->
+	Ids = lists:seq(1, Max),
+    lists:foreach(fun(Id) -> 
+		First = 
+		case Id - (Count/2) of
+			Less when Less =< 0 ->
+				1;
+			Valid ->
+				case Valid + Count of
+					LessThan when LessThan =< Max ->
+						round(Valid);
+					Overflow ->
+						Difference = Overflow - Max,
+						round(Valid - Difference)
+				end
+		end,
+		Last = First + Count,
+		BuddyIDs = lists:delete(Id, lists:seq(First, Last)),
+		do_add_buddy(Id, BuddyIDs, list_to_binary(Server))
+	end, Ids),
+	{created, ok}.
+
+do_add_buddy(Id, BuddyIDs, Server) ->
+	Account =  list_to_binary("test" ++ integer_to_list(Id)),
+	Group = <<"Buddies">>,
+    lists:foreach(fun(BuddyId) -> 
+		User = list_to_binary("test" ++ integer_to_list(BuddyId)),
+		Nickname = list_to_binary("Test " ++ integer_to_list(BuddyId)),
+		GroupEl = #xmlel{name = <<"group">>, children = [{xmlcdata, Group}]},
+		Attrs = [{<<"jid">>, jlib:jid_to_string(jlib:make_jid(User, Server, <<>>))}, {<<"name">>, Nickname}, {<<"subscription">>, <<"both">>}],
+		ItemEl = #xmlel{name = <<"item">>, attrs = Attrs, children = [GroupEl]},
+		El = #xmlel{name = <<"query">>, children = [ItemEl]},		
+	    mod_roster:set_items(Account, Server, El)
+		end, BuddyIDs).
 
 add_rosteritem(LocalUser, LocalServer, User, Server, Nick, Group, Subs) ->
     case add_rosteritem(LocalUser, LocalServer, User, Server, Nick, Group, list_to_atom(Subs), []) of
